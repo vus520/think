@@ -18,3 +18,17 @@ define('APP_MODE', 'console');
 define('APP_DEBUG',true);
 // 加载框架引导文件
 require './thinkphp/start.php';
+
+$console = new \think\Console('Think Console', '0.1');
+
+$commands = \think\Config::get('commands');
+
+if (is_array($commands)) {
+    foreach ($commands as $command) {
+        if (class_exists($command) && $command instanceof \think\console\command\Command) {
+            $console->add(new $command());
+        }
+    }
+}
+
+$console->run();
