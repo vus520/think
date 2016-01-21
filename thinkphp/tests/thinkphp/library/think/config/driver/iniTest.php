@@ -8,17 +8,26 @@
 // +----------------------------------------------------------------------
 // | Author: liu21st <liu21st@gmail.com>
 // +----------------------------------------------------------------------
-// $Id$
 
-return [
-    'url_route_on' => true,
-    'log'          => [
-        'type'             => 'trace', // 支持 socket trace file
-        // 以下为socket类型配置
-        'host'             => '111.202.76.133',
-        //日志强制记录到配置的client_id
-        'force_client_ids' => [],
-        //限制允许读取日志的client_id
-        'allow_client_ids' => [],
-    ],
-];
+/**
+ * Ini配置测试
+ * @author    7IN0SAN9 <me@7in0.me>
+ */
+
+namespace tests\thinkphp\library\think\config\driver;
+
+use think\config;
+
+class iniTest extends \PHPUnit_Framework_TestCase
+{
+    public function testParse()
+    {
+        Config::parse('inistring=1', 'ini');
+        $this->assertEquals(1, Config::get('inistring'));
+        Config::reset();
+        Config::parse(__DIR__ . '/fixtures/config.ini');
+        $this->assertTrue(Config::has('inifile'));
+        $this->assertEquals(1, Config::get('inifile'));
+        Config::reset();
+    }
+}

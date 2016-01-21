@@ -21,18 +21,19 @@ class Route
         'DELETE' => [],
         'HEAD'   => [],
         '*'      => [],
-        'REST'   => [],
     ];
 
+    // REST路由操作方法定义
     private static $rest = [
-        'index'  => ['GET', ''],
-        'create' => ['GET', '/create'],
-        'read'   => ['GET', '/:id'],
-        'edit'   => ['GET', '/:id/edit'],
-        'save'   => ['POST', ''],
-        'update' => ['PUT', '/:id'],
-        'delete' => ['DELETE', '/:id'],
+        'index'  => ['GET', '', 'index'],
+        'create' => ['GET', '/create', 'create'],
+        'read'   => ['GET', '/:id', 'read'],
+        'edit'   => ['GET', '/:id/edit', 'edit'],
+        'save'   => ['POST', '', 'save'],
+        'update' => ['PUT', '/:id', 'update'],
+        'delete' => ['DELETE', '/:id', 'delete'],
     ];
+
     // URL映射规则
     private static $map = [];
     // 子域名部署规则
@@ -187,37 +188,42 @@ class Route
         if (is_array($rule)) {
             foreach ($rule as $key => $val) {
                 if (is_array($val)) {
-                    $val = array_pad($val, 3, []);
-                    self::resource($key, $val[0], $val[1], $val[2]);
-                } else {
-                    self::resource($key, $val, $option, $pattern);
+                    list($val, $option, $pattern) = array_pad($val, 3, []);
                 }
+                self::resource($key, $val, $option, $pattern);
             }
         } else {
             if (strpos($rule, '.')) {
                 // 注册嵌套资源路由
-                list($rule1, $rule2) = explode('.', $rule);
-                self::get($rule1 . '/:' . $rule1 . '_id/' . $rule2 . '/:' . $rule2 . '_id$', $route . '/read', $option, $pattern);
-            } else {
-                // 注册资源路由
-                foreach (self::$rest as $key => $val) {
-                    if ((isset($option['only']) && !in_array($key, $option['only']))
-                        || (isset($option['except']) && in_array($key, $option['except']))) {
-                        continue;
-                    }
-                    self::register($rule . $val[1] . '$', $route . '/' . $key, $val[0], $option, $pattern);
+                $array = explode('.', $rule);
+                $last  = array_pop($array);
+                $item  = [];
+                foreach ($array as $val) {
+                    $item[] = $val . '/:' . (isset($option['var'][$val]) ? $option['var'][$val] : $val . '_id');
                 }
+                $rule = implode('/', $item) . '/' . $last;
+            }
+            // 注册资源路由
+            foreach (self::$rest as $key => $val) {
+                if ((isset($option['only']) && !in_array($key, $option['only']))
+                    || (isset($option['except']) && in_array($key, $option['except']))) {
+                    continue;
+                }
+                if (strpos($val[1], ':id') && isset($option['var'][$rule])) {
+                    $val[1] = str_replace(':id', ':' . $option['var'][$rule], $val[1]);
+                }
+                self::register($rule . $val[1] . '$', $route . '/' . $val[2], $val[0], $option, $pattern);
             }
         }
     }
 
     // rest方法定义和修改
-    public static function rest($method, $resocure = '')
+    public static function rest($name, $resource = [])
     {
-        if (is_array($method)) {
-            self::$rest = array_merge(self::$rest, $method);
+        if (is_array($name)) {
+            self::$rest = array_merge(self::$rest, $name);
         } else {
-            self::$rest[$method] = $resource;
+            self::$rest[$name] = $resource;
         }
     }
 
@@ -251,11 +257,10 @@ class Route
                 }
                 // 子域名配置
                 if (!empty($domain)) {
-                    // 记录子域名
-                    self::$subDomain = join('.', $domain);
-                    // 二级域名
-                    $subDomain = implode('.', $domain);
-                    $domain2   = array_pop($domain); 
+                    // 当前子域名
+                    $subDomain       = implode('.', $domain);
+                    self::$subDomain = $subDomain;
+                    $domain2         = array_pop($domain);
                     if ($domain) {
                         // 存在三级域名
                         $domain3 = array_pop($domain);
@@ -320,7 +325,7 @@ class Route
     }
 
     // 检测URL路由
-    public static function check($url, $depr = '/')
+    public static function check($url, $depr = '/', $checkDomain = false)
     {
         // 分隔符替换 确保路由定义使用统一的分隔符
         if ('/' != $depr) {
@@ -346,44 +351,14 @@ class Route
         }
 
         // 检测域名部署
-        if (Config::get('url_domain_deploy')) {
+        if ($checkDomain) {
             self::checkDomain();
         }
-        if (!empty(self::$bind['type'])) {
-            // 如果有URL绑定 则进行绑定检测
-            switch (self::$bind['type']) {
-                case 'class':
-                    // 绑定到类
-                    $array = explode('/', $url, 2);
-                    if (!empty($array[1])) {
-                        self::parseUrlParams($array[1]);
-                    }
-                    $return = ['type' => 'method', 'method' => [self::$bind['class'], $array[0] ?: Config::get('default_action')], 'params' => []];
-                    break;
-                case 'namespace':
-                    // 绑定到命名空间
-                    $array  = explode('/', $url, 3);
-                    $class  = !empty($array[0]) ? $array[0] : Config::get('default_controller');
-                    $method = !empty($array[1]) ? $array[1] : Config::get('default_action');
-                    if (!empty($array[2])) {
-                        self::parseUrlParams($array[2]);
-                    }
-                    $return = ['type' => 'method', 'method' => [self::$bind['namespace'] . '\\' . $class, $method], 'params' => []];
-                    break;
-                case 'module':
-                    // 如果有模块/控制器绑定 针对路由到 模块/控制器 有效
-                    $url = self::$bind['module'] . '/' . $url;
-                    break;
-                case 'group':
-                    // 绑定到路由分组
-                    $key = self::$bind['group'];
-                    if (array_key_exists($key, $rules)) {
-                        $rules = [$key => $rules[self::$bind['group']]];
-                    }
-            }
-            if (isset($return)) {
-                return $return;
-            }
+
+        // 检测URL绑定
+        $return = self::checkUrlBind($url, $rules);
+        if ($return) {
+            return $return;
         }
 
         // 路由规则检测
@@ -440,6 +415,43 @@ class Route
         return false;
     }
 
+    // 检测URL绑定
+    private static function checkUrlBind(&$url, &$rules)
+    {
+        if (!empty(self::$bind['type'])) {
+            // 如果有URL绑定 则进行绑定检测
+            switch (self::$bind['type']) {
+                case 'class':
+                    // 绑定到类
+                    $array = explode('/', $url, 2);
+                    if (!empty($array[1])) {
+                        self::parseUrlParams($array[1]);
+                    }
+                    return ['type' => 'method', 'method' => [self::$bind['class'], $array[0] ?: Config::get('default_action')], 'params' => []];
+                case 'namespace':
+                    // 绑定到命名空间
+                    $array  = explode('/', $url, 3);
+                    $class  = !empty($array[0]) ? $array[0] : Config::get('default_controller');
+                    $method = !empty($array[1]) ? $array[1] : Config::get('default_action');
+                    if (!empty($array[2])) {
+                        self::parseUrlParams($array[2]);
+                    }
+                    return ['type' => 'method', 'method' => [self::$bind['namespace'] . '\\' . $class, $method], 'params' => []];
+                case 'module':
+                    // 如果有模块/控制器绑定 针对路由到 模块/控制器 有效
+                    $url = self::$bind['module'] . '/' . $url;
+                    break;
+                case 'group':
+                    // 绑定到路由分组
+                    $key = self::$bind['group'];
+                    if (array_key_exists($key, $rules)) {
+                        $rules = [$key => $rules[self::$bind['group']]];
+                    }
+            }
+        }
+        return false;
+    }
+
     // 路由参数有效性检查
     private static function checkOption($option)
     {
@@ -454,12 +466,6 @@ class Route
             return false;
         }
         return true;
-    }
-
-    // 检查资源路由
-    private static function checkResoure()
-    {
-
     }
 
     /**

@@ -57,7 +57,7 @@ class Model
      * @param string $name 模型名称
      * @param array $config 模型配置
      */
-    public function __construct($name = '', $config = [])
+    public function __construct($name = '', array $config = [])
     {
         // 模型初始化
         $this->_initialize();
@@ -190,14 +190,18 @@ class Model
                 }
             }
         }
+        $fields = $this->getDbFields();
         // 检查非数据字段
-        if (!empty($this->fields)) {
+        if (!empty($fields)) {
             foreach ($data as $key => $val) {
-                if (!in_array($key, $this->fields, true)) {
+                if (!in_array($key, $fields, true)) {
+                    if (Config::get('db_fields_strict')) {
+                        throw new Exception(' fields not exists :[' . $key . '=>' . $val . ']');
+                    }
                     unset($data[$key]);
                 } elseif (is_scalar($val) && empty($this->options['bind'][':' . $key])) {
                     // 字段类型检查
-                    $this->_parseType($data, $key);
+                    $this->_parseType($data, $key, $this->options['bind']);
                 }
             }
         }
@@ -736,10 +740,9 @@ class Model
     /**
      * 生成查询SQL 可用于子查询
      * @access public
-     * @param array $options 表达式参数
      * @return string
      */
-    public function buildSql($options = [])
+    public function buildSql()
     {
         return '( ' . $this->fetchSql(true)->select() . ' )';
     }
@@ -777,7 +780,7 @@ class Model
                 $key = trim($key);
                 if (in_array($key, $fields, true)) {
                     if (is_scalar($val) && empty($options['bind'][':' . $key])) {
-                        $this->_parseType($options['where'], $key);
+                        $this->_parseType($options['where'], $key, $options['bind']);
                     }
                 }
             }
@@ -799,18 +802,21 @@ class Model
      * @param string $key 字段名
      * @return void
      */
-    protected function _parseType(&$data, $key)
+    protected function _parseType(&$data, $key, &$bind)
     {
-        if (!isset($this->options['bind'][':' . $key]) && isset($this->fields['_type'][$key])) {
+        if (!isset($bind[':' . $key]) && isset($this->fields['_type'][$key])) {
             $fieldType = strtolower($this->fields['_type'][$key]);
             if (false !== strpos($fieldType, 'enum')) {
                 // 支持ENUM类型优先检测
             } elseif (false === strpos($fieldType, 'bigint') && false !== strpos($fieldType, 'int')) {
-                $data[$key] = intval($data[$key]);
+                $bind[':' . $key] = [$data[$key], \PDO::PARAM_INT];
+                $data[$key]       = ':' . $key;
             } elseif (false !== strpos($fieldType, 'float') || false !== strpos($fieldType, 'double')) {
-                $data[$key] = floatval($data[$key]);
+                $bind[':' . $key] = [$data[$key], \PDO::PARAM_INT];
+                $data[$key]       = ':' . $key;
             } elseif (false !== strpos($fieldType, 'bool')) {
-                $data[$key] = (bool) $data[$key];
+                $bind[':' . $key] = [$data[$key], \PDO::PARAM_BOOL];
+                $data[$key]       = ':' . $key;
             } elseif (false !== strpos($fieldType, 'json') && is_array($data[$key])) {
                 $data[$key] = json_encode($data[$key]);
             }
@@ -1082,7 +1088,7 @@ class Model
      */
     public function getPk()
     {
-        return isset($this->fields['_pk']) ? $this->fields['_pk'] : $this->pk;
+        return $this->pk;
     }
 
     /**
@@ -1094,11 +1100,12 @@ class Model
     {
         if ($this->fields) {
             $fields = $this->fields;
-            unset($fields['_pk'], $fields['_type']);
+            unset($fields['_type']);
             return $fields;
         } else {
             $tableName = $this->getTableName();
-            $fields    = Cache::get(md5($tableName));
+            $guid      = md5($tableName);
+            $fields    = Cache::get($guid);
             if (!$fields) {
                 $fields       = $this->db->getFields($tableName);
                 $this->fields = array_keys($fields);
@@ -1106,28 +1113,21 @@ class Model
                     // 记录字段类型
                     $type[$key] = $val['type'];
                     if (!empty($val['primary'])) {
-                        // 增加复合主键支持
-                        if (!empty($this->fields['_pk'])) {
-                            if (is_string($this->fields['_pk'])) {
-                                $this->pk            = [$this->fields['_pk']];
-                                $this->fields['_pk'] = $this->pk;
-                            }
-                            $this->pk[]            = $key;
-                            $this->fields['_pk'][] = $key;
-                        } else {
-                            $this->pk            = $key;
-                            $this->fields['_pk'] = $key;
-                        }
+                        $pk[] = $key;
                     }
+                }
+                if (isset($pk)) {
+                    // 设置主键
+                    $this->pk = count($pk) > 1 ? $pk : $pk[0];
                 }
                 // 记录字段类型信息
                 $this->fields['_type'] = $type;
-                Cache::set(md5($tableName), $this->fields);
+                Cache::set($guid, $this->fields);
                 $fields = $this->fields;
             } else {
                 $this->fields = $fields;
             }
-            unset($fields['_pk'], $fields['_type']);
+            unset($fields['_type']);
             return $fields;
         }
     }
@@ -1271,7 +1271,7 @@ class Model
                     $table = preg_replace_callback("/__([A-Z0-9_-]+)__/sU", function ($match) use ($prefix) {
                         return $prefix . strtolower($match[1]);
                     }, $join);
-                } elseif (false === strpos($join, '(') && 0 !== strpos($join, $prefix)) {
+                } elseif (false === strpos($join, '(') && !empty($prefix) && 0 !== strpos($join, $prefix)) {
                     // 传入的表名中不带有'('并且不以默认的表前缀开头时加上默认的表前缀
                     $table = $prefix . $join;
                 } else {

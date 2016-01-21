@@ -30,10 +30,10 @@ class Cx extends Taglib
         'volist'     => ['attr' => 'name,id,offset,length,key,mod', 'alias' => 'iterate'],
         'foreach'    => ['attr' => 'name,id,item,key,offset,length,mod', 'expression' => true],
         'if'         => ['attr' => 'condition', 'expression' => true],
-        'elseif'     => ['attr' => 'condition', 'close' => 0],
+        'elseif'     => ['attr' => 'condition', 'close' => 0, 'expression' => true],
         'else'       => ['attr' => '', 'close' => 0],
-        'switch'     => ['attr' => 'name'],
-        'case'       => ['attr' => 'value,break'],
+        'switch'     => ['attr' => 'name', 'expression' => true],
+        'case'       => ['attr' => 'value,break', 'expression' => true],
         'default'    => ['attr' => '', 'close' => 0],
         'compare'    => ['attr' => 'name,value,type', 'alias' => 'eq,equal,notequal,neq,gt,lt,egt,elt,heq,nheq'],
         'range'      => ['attr' => 'name,value,type', 'alias' => 'in,notin,between,notbetween'],
@@ -251,9 +251,9 @@ class Cx extends Taglib
      */
     public function _switch($tag, $content)
     {
-        $name     = $tag['name'];
+        $name     = !empty($tag['expression']) ? $tag['expression'] : $tag['name'];
         $name     = $this->autoBuildVar($name);
-        $parseStr = '<?php switch(' . $name . '): ?>' . $content . '<?php endswitch;?>';
+        $parseStr = '<?php switch(' . $name . '): ?>' . $content . '<?php endswitch; ?>';
         return $parseStr;
     }
 
@@ -266,24 +266,24 @@ class Cx extends Taglib
      */
     public function _case($tag, $content)
     {
-        $value = $tag['value'];
+        $value = !empty($tag['expression']) ? $tag['expression'] : $tag['value'];
         $flag  = substr($value, 0, 1);
         if ('$' == $flag || ':' == $flag) {
             $value = $this->autoBuildVar($value);
-            $value = 'case ' . $value . ': ';
+            $value = 'case ' . $value . ':';
         } elseif (strpos($value, '|')) {
             $values = explode('|', $value);
             $value  = '';
             foreach ($values as $val) {
-                $value .= 'case "' . addslashes($val) . '": ';
+                $value .= 'case "' . addslashes($val) . '":';
             }
         } else {
-            $value = 'case "' . $value . '": ';
+            $value = 'case "' . $value . '":';
         }
         $parseStr = '<?php ' . $value . ' ?>' . $content;
         $isBreak  = isset($tag['break']) ? $tag['break'] : '';
         if ('' == $isBreak || $isBreak) {
-            $parseStr .= '<?php break;?>';
+            $parseStr .= '<?php break; ?>';
         }
         return $parseStr;
     }
@@ -309,6 +309,7 @@ class Cx extends Taglib
      * @access public
      * @param array $tag 标签属性
      * @param string $content 标签内容
+     * @param string $type 比较类型
      * @return string
      */
     public function _compare($tag, $content, $type = 'eq')
@@ -319,12 +320,12 @@ class Cx extends Taglib
         $name  = $this->autoBuildVar($name);
         $flag  = substr($value, 0, 1);
         if ('$' == $flag || ':' == $flag) {
-            $value = '(' . $this->autoBuildVar($value) . ')';
+            $value = $this->autoBuildVar($value);
         } else {
             $value = '\'' . $value . '\'';
         }
         $type     = $this->parseCondition(' ' . $type . ' ');
-        $parseStr = '<?php if((' . $name . ') ' . $type . ' ' . $value . '): ?>' . $content . '<?php endif; ?>';
+        $parseStr = '<?php if(' . $name . ' ' . $type . ' ' . $value . '): ?>' . $content . '<?php endif; ?>';
         return $parseStr;
     }
 

@@ -34,7 +34,7 @@ class App
         // 读取扩展配置文件
         if (Config::get('extra_config_list')) {
             foreach (Config::get('extra_config_list') as $file) {
-                Config::load($file, $file);
+                Config::load(APP_PATH . $file . EXT, $file);
             }
         }
 
@@ -68,6 +68,9 @@ class App
             defined('LANG_SET') or define('LANG_SET', Lang::range());
             // 加载系统语言包
             Lang::load(THINK_PATH . 'lang' . DS . LANG_SET . EXT);
+            if (!APP_MULTI_MODULE) {
+                Lang::load(APP_PATH . 'lang' . DS . LANG_SET . EXT);
+            }
         }
 
         // 启动session CLI 不开启
@@ -176,7 +179,7 @@ class App
     {
         if (APP_MULTI_MODULE) {
             // 多模块部署
-            $module = $result[0] ?: $config['default_module'];
+            $module = strtolower($result[0] ?: $config['default_module']);
             if ($maps = $config['url_module_map']) {
                 if (isset($maps[$module])) {
                     // 记录当前别名
@@ -189,14 +192,13 @@ class App
                 }
             }
             // 获取模块名称
-            define('MODULE_NAME', strtolower(defined('BIND_MODULE') ? BIND_MODULE : strip_tags($module)));
+            define('MODULE_NAME', strip_tags($module));
 
             // 模块初始化
             if (MODULE_NAME && !in_array(MODULE_NAME, $config['deny_module_list']) && is_dir(APP_PATH . MODULE_NAME)) {
                 APP_HOOK && Hook::listen('app_begin');
                 define('MODULE_PATH', APP_PATH . MODULE_NAME . DS);
                 define('VIEW_PATH', MODULE_PATH . VIEW_LAYER . DS);
-
                 // 初始化模块
                 self::initModule(MODULE_NAME, $config);
             } else {
@@ -210,12 +212,9 @@ class App
         }
 
         // 获取控制器名
-        $controller = strip_tags($result[1] ?: Config::get('default_controller'));
-        define('CONTROLLER_NAME', strtolower(defined('BIND_CONTROLLER') ? BIND_CONTROLLER : $controller));
-
+        define('CONTROLLER_NAME', strtolower(strip_tags($result[1] ?: Config::get('default_controller'))));
         // 获取操作名
-        $action = strip_tags($result[2] ?: Config::get('default_action'));
-        define('ACTION_NAME', strtolower(defined('BIND_ACTION') ? BIND_ACTION : $action));
+        define('ACTION_NAME', strtolower(strip_tags($result[2] ?: Config::get('default_action'))));
 
         // 执行操作
         if (!preg_match('/^[A-Za-z](\/|\.|\w)*$/', CONTROLLER_NAME)) {
@@ -233,9 +232,6 @@ class App
             $action = ACTION_NAME . Config::get('action_suffix');
         }
 
-        if (!$instance) {
-            throw new Exception('class [ ' . Loader::parseClass(MODULE_NAME, CONTROLLER_LAYER, CONTROLLER_NAME) . ' ] not exists', 10001);
-        }
         try {
             // 操作方法开始监听
             $call = [$instance, $action];
@@ -291,11 +287,11 @@ class App
         } else {
             $path = APP_PATH . $module;
             // 加载模块配置
-            Config::load($module . 'config');
+            Config::load(APP_PATH . $module . 'config' . EXT);
 
             // 加载应用状态配置
             if ($config['app_status']) {
-                Config::load($module . $config['app_status']);
+                Config::load(APP_PATH . $module . $config['app_status'] . EXT);
             }
 
             // 加载别名文件
@@ -377,10 +373,13 @@ class App
         $depr = $config['pathinfo_depr'];
         // 路由检测
         if (!empty($config['url_route_on'])) {
-            // 开启路由 注册路由定义文件
-            Route::register(!empty($config['route']) ? $config['route'] : null);
+            // 开启路由
+            if (!empty($config['route'])) {
+                // 注册路由定义文件
+                Route::register($config['route']);
+            }
             // 路由检测（根据路由定义返回不同的URL调度）
-            $result = Route::check($_SERVER['PATH_INFO'], $depr);
+            $result = Route::check($_SERVER['PATH_INFO'], $depr, $config['url_domain_deploy']);
             if (false === $result) {
                 // 路由无效
                 if ($config['url_route_must']) {
