@@ -288,11 +288,11 @@ class Input
      */
     private static function regexFilter($input, $filter)
     {
-        $begin = $filter[0];
-        $end   = $filter[strlen($filter) - 1];
-        if (is_array($input)) {
+        if (empty($filter) || is_array($input)) {
             return null;
         }
+        $begin = $filter[0];
+        $end   = $filter[strlen($filter) - 1];
         if (
             ('/' === $begin && '/' === $end) ||
             ('#' === $begin && '#' === $end) ||

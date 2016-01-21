@@ -87,6 +87,8 @@ return [
     'url_domain_deploy'     => false,
     // 域名根，如.thinkphp.cn
     'url_domain_root'       => '',
+    // 是否开启 rest 操作方法
+    'url_rest_action'       => false,
 
     // +----------------------------------------------------------------------
     // | 视图及模板设置
@@ -137,10 +139,11 @@ return [
     // 是否使用session
     'use_session'           => true,
     'session'               => [
-        'id'         => '',
-        'prefix'     => 'think',
-        'type'       => '',
-        'auto_start' => true,
+        'id'             => '',
+        'var_session_id' => '', // SESSION_ID的提交变量,解决flash上传跨域
+        'prefix'         => 'think',
+        'type'           => '',
+        'auto_start'     => true,
     ],
 
     // +----------------------------------------------------------------------

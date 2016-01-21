@@ -91,26 +91,19 @@ class App
                 break;
             case 'module':
                 // 模块/控制器/操作
-                $data = self::module(self::$dispatch['data'], $config);
+                $data = self::module(self::$dispatch['module'], $config);
                 break;
             case 'controller':
                 // 执行控制器操作
                 $data = Loader::action(self::$dispatch['controller'], self::$dispatch['params']);
                 break;
-            case 'callable':
+            case 'method':
                 // 执行回调方法
-                $callable = self::$dispatch['callable'];
-                if (is_callable($callable)) {
-                    $data = is_array($callable) ?
-                    self::reflectionInvoke(new $callable[0], $callable[1]) : // 数组定义需要实例化的对象和方法
-                    call_user_func_array($callable, self::$dispatch['params']); // 静态方法或者函数
-                } else {
-                    throw new Exception('not callable : ' . (is_array($callable) ? implode('->', $callable) : $callable), 10009);
-                }
+                $data = self::invokeMethod(self::$dispatch['method'], self::$dispatch['params']);
                 break;
-            case 'closure':
+            case 'function':
                 // 规则闭包
-                $data = self::invoke(self::$dispatch['closure'], self::$dispatch['params']);
+                $data = self::invokeFunction(self::$dispatch['function'], self::$dispatch['params']);
                 break;
             default:
                 throw new Exception('dispatch type not support', 10008);
@@ -121,44 +114,61 @@ class App
         return Response::send($data, Response::type(), Config::get('response_return'));
     }
 
-    // 执行规则匹配下的闭包方法 支持参数调用
-    private static function invoke($closure, $var = [])
+    // 执行函数或者闭包方法 支持参数调用
+    private static function invokeFunction($function, $vars = [])
     {
-        $reflect = new \ReflectionFunction($closure);
-        $params  = $reflect->getParameters();
-        $args    = [];
-        foreach ($params as $param) {
-            $name = $param->getName();
-            if (isset($var[$name])) {
-                $args[] = $var[$name];
-            } elseif ($param->isDefaultValueAvailable()) {
-                $args[] = $param->getDefaultValue();
-            }
-        }
+        $reflect = new \ReflectionFunction($function);
+        $args    = self::bindParams($reflect, $vars);
         return $reflect->invokeArgs($args);
     }
 
     // 调用反射执行类的方法 支持参数绑定
-    private static function reflectionInvoke($class, $method)
+    private static function invokeMethod($method, $vars = [])
     {
-        //执行当前操作
-        $reflect = new \ReflectionMethod($class, $method);
-        if ($reflect->isPublic()) {
-            // URL参数绑定检测
-            if (Config::get('url_params_bind') && $reflect->getNumberOfParameters() > 0) {
-                // 获取绑定参数
-                $args = self::getBindParams($reflect, Config::get('url_parmas_bind_type'));
-                // 全局过滤
-                array_walk_recursive($args, 'think\\Input::filterExp');
-                $data = $reflect->invokeArgs($class, $args);
-            } else {
-                $data = $reflect->invoke($class);
+        if (empty($vars)) {
+            // 自动获取请求变量
+            switch ($_SERVER['REQUEST_METHOD']) {
+                case 'POST':
+                    $vars = array_merge($_GET, $_POST);
+                    break;
+                case 'PUT':
+                    parse_str(file_get_contents('php://input'), $vars);
+                    break;
+                default:
+                    $vars = $_GET;
             }
-        } else {
-            // 操作方法不是Public 抛出异常
-            throw new \ReflectionException();
         }
-        return $data;
+        if (is_array($method)) {
+            $class   = is_object($method[0]) ? $method[0] : new $method[0];
+            $reflect = new \ReflectionMethod($class, $method[1]);
+        } else {
+            // 静态方法
+            $reflect = new \ReflectionMethod($method);
+        }
+        $args = self::bindParams($reflect, $vars);
+        return $reflect->invokeArgs(isset($class) ? $class : null, $args);
+    }
+
+    // 绑定参数
+    private static function bindParams($reflect, $vars)
+    {
+        $args = [];
+        if ($reflect->getNumberOfParameters() > 0) {
+            $params = $reflect->getParameters();
+            foreach ($params as $param) {
+                $name = $param->getName();
+                if (isset($vars[$name])) {
+                    $args[] = $vars[$name];
+                } elseif ($param->isDefaultValueAvailable()) {
+                    $args[] = $param->getDefaultValue();
+                } else {
+                    throw new Exception('method param miss:' . $name, 10004);
+                }
+            }
+            // 全局过滤
+            array_walk_recursive($args, 'think\\Input::filterExp');
+        }
+        return $args;
     }
 
     // 执行 模块/控制器/操作
@@ -166,7 +176,7 @@ class App
     {
         if (APP_MULTI_MODULE) {
             // 多模块部署
-            $module = strtolower($result[0] ?: $config['default_module']);
+            $module = $result[0] ?: $config['default_module'];
             if ($maps = $config['url_module_map']) {
                 if (isset($maps[$module])) {
                     // 记录当前别名
@@ -179,7 +189,7 @@ class App
                 }
             }
             // 获取模块名称
-            define('MODULE_NAME', defined('BIND_MODULE') ? BIND_MODULE : strip_tags($module));
+            define('MODULE_NAME', strtolower(defined('BIND_MODULE') ? BIND_MODULE : strip_tags($module)));
 
             // 模块初始化
             if (MODULE_NAME && !in_array(MODULE_NAME, $config['deny_module_list']) && is_dir(APP_PATH . MODULE_NAME)) {
@@ -201,11 +211,11 @@ class App
 
         // 获取控制器名
         $controller = strip_tags($result[1] ?: Config::get('default_controller'));
-        define('CONTROLLER_NAME', defined('BIND_CONTROLLER') ? BIND_CONTROLLER : $controller);
+        define('CONTROLLER_NAME', strtolower(defined('BIND_CONTROLLER') ? BIND_CONTROLLER : $controller));
 
         // 获取操作名
-        $action = strip_tags(strtolower($result[2] ?: Config::get('default_action')));
-        define('ACTION_NAME', defined('BIND_ACTION') ? BIND_ACTION : $action);
+        $action = strip_tags($result[2] ?: Config::get('default_action'));
+        define('ACTION_NAME', strtolower(defined('BIND_ACTION') ? BIND_ACTION : $action));
 
         // 执行操作
         if (!preg_match('/^[A-Za-z](\/|\.|\w)*$/', CONTROLLER_NAME)) {
@@ -235,7 +245,7 @@ class App
                 throw new \ReflectionException();
             }
             // 执行操作方法
-            $data = self::reflectionInvoke($instance, $action);
+            $data = self::invokeMethod($call);
         } catch (\ReflectionException $e) {
             // 操作不存在
             if (method_exists($instance, '_empty')) {
@@ -267,35 +277,6 @@ class App
             throw new Exception('bind action class not exists :' . ACTION_NAME, 10003);
         }
         return $class;
-    }
-
-    // 获取操作方法的参数绑定
-    private static function getBindParams($method, $paramsBindType)
-    {
-        switch ($_SERVER['REQUEST_METHOD']) {
-            case 'POST':
-                $vars = array_merge($_GET, $_POST);
-                break;
-            case 'PUT':
-                parse_str(file_get_contents('php://input'), $vars);
-                break;
-            default:
-                $vars = $_GET;
-        }
-        $params = $method->getParameters();
-        foreach ($params as $param) {
-            $name = $param->getName();
-            if (1 == $paramsBindType && !empty($vars)) {
-                $args[] = array_shift($vars);
-            } elseif (0 == $paramsBindType && isset($vars[$name])) {
-                $args[] = $vars[$name];
-            } elseif ($param->isDefaultValueAvailable()) {
-                $args[] = $param->getDefaultValue();
-            } else {
-                throw new Exception('url param bind error:' . $name, 10004);
-            }
-        }
-        return $args;
     }
 
     // 初始化模块
